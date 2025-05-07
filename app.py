@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import tableauserverclient as TSC
 import logging
 import ssl
+from gevent.pool import Pool
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -18,11 +19,15 @@ site = 'axosfinancialproduction'
 try:
     tableau_auth = TSC.PersonalAccessTokenAuth(token_name, personal_access_token, site)
     server = TSC.Server(server_url, use_server_version=True)
-    server.add_http_options({'timeout': 10})  # Set a 10-second timeout for requests
+    server.add_http_options({'timeout': 10})  # Set a 10-second timeout for individual requests
     logger.info("Tableau Server connection initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize Tableau Server connection: {str(e)}")
     raise
+
+def populate_views_async(workbook):
+    server.workbooks.populate_views(workbook)
+    return workbook
 
 def search_workbooks(query):
     try:
@@ -31,32 +36,29 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            batch_size = 5  # Process 5 workbooks at a time to manage memory
-            for i in range(0, len(all_workbooks), batch_size):
-                batch = all_workbooks[i:i + batch_size]
-                for workbook in batch:
-                    # Check workbook name first
-                    if query.lower() in workbook.name.lower():
-                        server.workbooks.populate_views(workbook)
+            pool = Pool(10)  # Use 10 greenlets for parallel processing
+            populated_workbooks = pool.map(populate_views_async, all_workbooks)
+            for workbook in populated_workbooks:
+                # Check workbook name first
+                if query.lower() in workbook.name.lower():
+                    results.append({
+                        "name": workbook.name,
+                        "id": workbook.id,
+                        "project_name": workbook.project_name,
+                        "webpage_url": workbook.webpage_url,
+                        "views": [view.name for view in workbook.views]
+                    })
+                else:
+                    # Check views for matches
+                    matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
+                    if matching_views:
                         results.append({
                             "name": workbook.name,
                             "id": workbook.id,
                             "project_name": workbook.project_name,
                             "webpage_url": workbook.webpage_url,
-                            "views": [view.name for view in workbook.views]
+                            "views": [view.name for view in matching_views]
                         })
-                    else:
-                        # Lazy load views only if needed
-                        server.workbooks.populate_views(workbook)
-                        matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
-                        if matching_views:
-                            results.append({
-                                "name": workbook.name,
-                                "id": workbook.id,
-                                "project_name": workbook.project_name,
-                                "webpage_url": workbook.webpage_url,
-                                "views": [view.name for view in matching_views]
-                            })
             return results
     except Exception as e:
         logger.error(f"Error in search_workbooks: {str(e)}")
