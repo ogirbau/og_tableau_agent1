@@ -31,29 +31,32 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            for workbook in all_workbooks:
-                # Check if the query matches the workbook name first
-                if query.lower() in workbook.name.lower():
-                    server.workbooks.populate_views(workbook)
-                    results.append({
-                        "name": workbook.name,
-                        "id": workbook.id,
-                        "project_name": workbook.project_name,
-                        "webpage_url": workbook.webpage_url,
-                        "views": [view.name for view in workbook.views]
-                    })
-                else:
-                    # If the query doesn't match the workbook name, check the views
-                    server.workbooks.populate_views(workbook)
-                    matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
-                    if matching_views:
+            batch_size = 5  # Process 5 workbooks at a time to manage memory
+            for i in range(0, len(all_workbooks), batch_size):
+                batch = all_workbooks[i:i + batch_size]
+                for workbook in batch:
+                    # Check workbook name first
+                    if query.lower() in workbook.name.lower():
+                        server.workbooks.populate_views(workbook)
                         results.append({
                             "name": workbook.name,
                             "id": workbook.id,
                             "project_name": workbook.project_name,
                             "webpage_url": workbook.webpage_url,
-                            "views": [view.name for view in matching_views]
+                            "views": [view.name for view in workbook.views]
                         })
+                    else:
+                        # Lazy load views only if needed
+                        server.workbooks.populate_views(workbook)
+                        matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
+                        if matching_views:
+                            results.append({
+                                "name": workbook.name,
+                                "id": workbook.id,
+                                "project_name": workbook.project_name,
+                                "webpage_url": workbook.webpage_url,
+                                "views": [view.name for view in matching_views]
+                            })
             return results
     except Exception as e:
         logger.error(f"Error in search_workbooks: {str(e)}")
