@@ -3,6 +3,12 @@ import tableauserverclient as TSC
 import logging
 import ssl
 from gevent.pool import Pool
+import requests
+
+# Disable proxies to avoid Render environment interference
+requests.adapters.DEFAULT_RETRIES = 1
+requests_session = requests.Session()
+requests_session.trust_env = False  # Disable proxy settings from environment
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -19,7 +25,7 @@ site = 'axosfinancialproduction'
 try:
     tableau_auth = TSC.PersonalAccessTokenAuth(token_name, personal_access_token, site)
     server = TSC.Server(server_url, use_server_version=True)
-    server.add_http_options({'timeout': 10})  # Set a 10-second timeout for individual requests
+    server.add_http_options({'timeout': 10, 'session': requests_session})  # Use custom session
     logger.info("Tableau Server connection initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize Tableau Server connection: {str(e)}")
@@ -36,8 +42,10 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
+            # Limit to 10 workbooks to reduce load
+            workbooks_to_process = all_workbooks[:10]
             pool = Pool(10)  # Use 10 greenlets for parallel processing
-            populated_workbooks = pool.map(populate_views_async, all_workbooks)
+            populated_workbooks = pool.map(populate_views_async, workbooks_to_process)
             for workbook in populated_workbooks:
                 # Check workbook name first
                 if query.lower() in workbook.name.lower():
