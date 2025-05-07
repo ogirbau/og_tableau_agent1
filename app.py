@@ -3,12 +3,12 @@ import tableauserverclient as TSC
 import logging
 import ssl
 from gevent.pool import Pool
-import requests
+import os
 
-# Disable proxies to avoid Render environment interference
-requests.adapters.DEFAULT_RETRIES = 1
-requests_session = requests.Session()
-requests_session.trust_env = False  # Disable proxy settings from environment
+# Disable proxies globally
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['NO_PROXY'] = '*'
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -25,7 +25,7 @@ site = 'axosfinancialproduction'
 try:
     tableau_auth = TSC.PersonalAccessTokenAuth(token_name, personal_access_token, site)
     server = TSC.Server(server_url, use_server_version=True)
-    server.add_http_options({'timeout': 10, 'session': requests_session})  # Use custom session
+    server.add_http_options({'timeout': 10})  # Only set timeout
     logger.info("Tableau Server connection initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize Tableau Server connection: {str(e)}")
