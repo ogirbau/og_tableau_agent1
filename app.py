@@ -32,7 +32,7 @@ except Exception as e:
     raise
 
 def populate_views_with_retry(workbook):
-    max_retries = 2  # Reduce to 2 attempts
+    max_retries = 2
     for attempt in range(max_retries):
         try:
             server.workbooks.populate_views(workbook)
@@ -42,7 +42,8 @@ def populate_views_with_retry(workbook):
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
             else:
-                raise
+                logger.error(f"Max retries reached for workbook {workbook.id}, skipping.")
+                return None
 
 def search_workbooks(query):
     try:
@@ -51,39 +52,44 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            batch_size = 3  # Reduce to 3 workbooks per batch
+            batch_size = 3
             for i in range(0, len(all_workbooks), batch_size):
                 batch = all_workbooks[i:i + batch_size]
                 for workbook in batch:
-                    workbook = populate_views_with_retry(workbook)
-                    logger.debug(f"Checking workbook: {workbook.name}")
-                    view_names = [view.name for view in workbook.views]
-                    logger.debug(f"Views in workbook {workbook.name}: {view_names}")
-                    if query.lower() in workbook.name.lower():
-                        results.append({
-                            "name": workbook.name,
-                            "id": workbook.id,
-                            "project_name": workbook.project_name,
-                            "webpage_url": workbook.webpage_url,
-                            "views": view_names
-                        })
-                    else:
-                        matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
-                        if matching_views:
-                            results.append({
-                                "name": workbook.name,
-                                "id": workbook.id,
-                                "project_name": workbook.project_name,
-                                "webpage_url": workbook.webpage_url,
-                                "views": [view.name for view in matching_views]
-                            })
-                    # Clear memory
-                    workbook._views = None
-                    gc.collect()
+                    workbook_result = populate_views_with_retry(workbook)
+                    if workbook_result is not None:
+                        try:
+                            logger.debug(f"Checking workbook: {workbook.name}")
+                            view_names = [view.name for view in workbook.views]
+                            logger.debug(f"Views in workbook {workbook.name}: {view_names}")
+                            if query.lower() in workbook.name.lower():
+                                results.append({
+                                    "name": workbook.name,
+                                    "id": workbook.id,
+                                    "project_name": workbook.project_name,
+                                    "webpage_url": workbook.webpage_url,
+                                    "views": view_names
+                                })
+                            else:
+                                matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
+                                if matching_views:
+                                    results.append({
+                                        "name": workbook.name,
+                                        "id": workbook.id,
+                                        "project_name": workbook.project_name,
+                                        "webpage_url": workbook.webpage_url,
+                                        "views": [view.name for view in matching_views]
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error processing views for workbook {workbook.id}: {str(e)}, skipping.")
+                        finally:
+                            # Clear memory
+                            workbook._views = None
+                            gc.collect()
             return results
     except Exception as e:
         logger.error(f"Error in search_workbooks: {str(e)}")
-        raise
+        return results  # Return partial results even if an error occurs
 
 @app.route('/')
 def home():
