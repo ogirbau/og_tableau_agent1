@@ -2,9 +2,9 @@ from flask import Flask, request, jsonify
 import tableauserverclient as TSC
 import logging
 import ssl
-from gevent.pool import Pool
 import os
 import time
+import gc  # For garbage collection
 
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
@@ -31,7 +31,7 @@ except Exception as e:
     logger.error(f"Failed to initialize Tableau Server connection: {str(e)}")
     raise
 
-def populate_views_async(workbook):
+def populate_views_with_retry(workbook):
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -40,7 +40,7 @@ def populate_views_async(workbook):
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for workbook {workbook.id}: {str(e)}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                time.sleep(2 ** attempt)  # Exponential backoff
             else:
                 raise
 
@@ -51,30 +51,35 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            pool = Pool(5)  # Reduce to 5 greenlets
-            populated_workbooks = pool.map(populate_views_async, all_workbooks)
-            for workbook in populated_workbooks:
-                logger.debug(f"Checking workbook: {workbook.name}")
-                view_names = [view.name for view in workbook.views]
-                logger.debug(f"Views in workbook {workbook.name}: {view_names}")
-                if query.lower() in workbook.name.lower():
-                    results.append({
-                        "name": workbook.name,
-                        "id": workbook.id,
-                        "project_name": workbook.project_name,
-                        "webpage_url": workbook.webpage_url,
-                        "views": view_names
-                    })
-                else:
-                    matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
-                    if matching_views:
+            batch_size = 5  # Process 5 workbooks at a time
+            for i in range(0, len(all_workbooks), batch_size):
+                batch = all_workbooks[i:i + batch_size]
+                for workbook in batch:
+                    workbook = populate_views_with_retry(workbook)
+                    logger.debug(f"Checking workbook: {workbook.name}")
+                    view_names = [view.name for view in workbook.views]
+                    logger.debug(f"Views in workbook {workbook.name}: {view_names}")
+                    if query.lower() in workbook.name.lower():
                         results.append({
                             "name": workbook.name,
                             "id": workbook.id,
                             "project_name": workbook.project_name,
                             "webpage_url": workbook.webpage_url,
-                            "views": [view.name for view in matching_views]
+                            "views": view_names
                         })
+                    else:
+                        matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
+                        if matching_views:
+                            results.append({
+                                "name": workbook.name,
+                                "id": workbook.id,
+                                "project_name": workbook.project_name,
+                                "webpage_url": workbook.webpage_url,
+                                "views": [view.name for view in matching_views]
+                            })
+                    # Clear memory
+                    workbook._views = None
+                    gc.collect()
             return results
     except Exception as e:
         logger.error(f"Error in search_workbooks: {str(e)}")
