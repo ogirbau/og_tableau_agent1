@@ -4,7 +4,7 @@ import logging
 import ssl
 import os
 import time
-import gc  # For garbage collection
+import gc
 
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
@@ -32,7 +32,7 @@ except Exception as e:
     raise
 
 def populate_views_with_retry(workbook):
-    max_retries = 3
+    max_retries = 2  # Reduce to 2 attempts
     for attempt in range(max_retries):
         try:
             server.workbooks.populate_views(workbook)
@@ -40,7 +40,7 @@ def populate_views_with_retry(workbook):
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for workbook {workbook.id}: {str(e)}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
+                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
             else:
                 raise
 
@@ -51,7 +51,7 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            batch_size = 5  # Process 5 workbooks at a time
+            batch_size = 3  # Reduce to 3 workbooks per batch
             for i in range(0, len(all_workbooks), batch_size):
                 batch = all_workbooks[i:i + batch_size]
                 for workbook in batch:
@@ -105,4 +105,4 @@ def search():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
