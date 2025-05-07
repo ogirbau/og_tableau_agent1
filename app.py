@@ -5,7 +5,6 @@ import ssl
 from gevent.pool import Pool
 import os
 
-# Disable proxies globally
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
 os.environ['NO_PROXY'] = '*'
@@ -19,13 +18,13 @@ app = Flask(__name__)
 
 server_url = 'https://prod-useast-b.online.tableau.com'
 token_name = "PowerAutomateAgent"
-personal_access_token = "IK9CGGROTHCkI0DY2sslXQ==:FztEDBxDDAQY5gm8VL2J0LUTBRDfkQGq"  # Replace with your actual Token Secret
+personal_access_token = "YOUR_TOKEN_SECRET"  # Replace with your actual Token Secret
 site = 'axosfinancialproduction'
 
 try:
     tableau_auth = TSC.PersonalAccessTokenAuth(token_name, personal_access_token, site)
     server = TSC.Server(server_url, use_server_version=True)
-    server.add_http_options({'timeout': 10})  # Only set timeout
+    server.add_http_options({'timeout': 10})
     logger.info("Tableau Server connection initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize Tableau Server connection: {str(e)}")
@@ -42,11 +41,13 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            # Limit to 10 workbooks to reduce load
-            workbooks_to_process = all_workbooks[:10]
-            pool = Pool(10)  # Use 10 greenlets for parallel processing
-            populated_workbooks = pool.map(populate_views_async, workbooks_to_process)
+            pool = Pool(10)
+            populated_workbooks = pool.map(populate_views_async, all_workbooks)  # Process all workbooks
             for workbook in populated_workbooks:
+                # Log workbook and view names for debugging
+                logger.debug(f"Checking workbook: {workbook.name}")
+                view_names = [view.name for view in workbook.views]
+                logger.debug(f"Views in workbook {workbook.name}: {view_names}")
                 # Check workbook name first
                 if query.lower() in workbook.name.lower():
                     results.append({
@@ -54,7 +55,7 @@ def search_workbooks(query):
                         "id": workbook.id,
                         "project_name": workbook.project_name,
                         "webpage_url": workbook.webpage_url,
-                        "views": [view.name for view in workbook.views]
+                        "views": view_names
                     })
                 else:
                     # Check views for matches
