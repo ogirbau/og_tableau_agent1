@@ -4,6 +4,7 @@ import logging
 import ssl
 from gevent.pool import Pool
 import os
+import time
 
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
@@ -31,8 +32,17 @@ except Exception as e:
     raise
 
 def populate_views_async(workbook):
-    server.workbooks.populate_views(workbook)
-    return workbook
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            server.workbooks.populate_views(workbook)
+            return workbook
+        except Exception as e:
+            logger.warning(f"Attempt {attempt + 1} failed for workbook {workbook.id}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+            else:
+                raise
 
 def search_workbooks(query):
     try:
@@ -41,14 +51,12 @@ def search_workbooks(query):
             all_workbooks = list(TSC.Pager(server.workbooks))
             logger.info(f"Found {len(all_workbooks)} total workbooks.")
             results = []
-            pool = Pool(10)
-            populated_workbooks = pool.map(populate_views_async, all_workbooks)  # Process all workbooks
+            pool = Pool(5)  # Reduce to 5 greenlets
+            populated_workbooks = pool.map(populate_views_async, all_workbooks)
             for workbook in populated_workbooks:
-                # Log workbook and view names for debugging
                 logger.debug(f"Checking workbook: {workbook.name}")
                 view_names = [view.name for view in workbook.views]
                 logger.debug(f"Views in workbook {workbook.name}: {view_names}")
-                # Check workbook name first
                 if query.lower() in workbook.name.lower():
                     results.append({
                         "name": workbook.name,
@@ -58,7 +66,6 @@ def search_workbooks(query):
                         "views": view_names
                     })
                 else:
-                    # Check views for matches
                     matching_views = [view for view in workbook.views if query.lower() in view.name.lower()]
                     if matching_views:
                         results.append({
