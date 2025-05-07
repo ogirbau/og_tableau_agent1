@@ -1,3 +1,5 @@
 flask
 tableauserverclient
 gunicorn
+celery[redis]
+redis
